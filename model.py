@@ -15,7 +15,17 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-class LayerNorm(nn.Module):
+# class LayerNorm(nn.Module):
+#     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
+
+#     def __init__(self, ndim, bias):
+#         super().__init__()
+#         self.weight = nn.Parameter(torch.ones(ndim))
+#         self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
+
+#     def forward(self, input):
+#         return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
+class LayerNorm(nn.Module): #We'll modify this to work like AdaNorm
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
 
     def __init__(self, ndim, bias):
@@ -24,8 +34,13 @@ class LayerNorm(nn.Module):
         self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
 
     def forward(self, input):
-        return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
-
+        mean = input.mean(-1, keepdim=True)
+        std = input.std(-1, keepdim=True)
+        input = input - mean
+        mean = input.mean(-1, keepdim=True)
+        graNorm = (1 / 10 * (input - mean) / (std + 1e-3)).detach()
+        input_norm = (input - input * graNorm) / (std + 1e-3)
+        return input_norm*1
 class CausalSelfAttention(nn.Module):
 
     def __init__(self, config):
@@ -59,18 +74,18 @@ class CausalSelfAttention(nn.Module):
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        if self.flash:
-            # efficient attention using Flash Attention CUDA kernels
-            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
-        else:
-            # manual implementation of attention
-            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-            att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
-            att = F.softmax(att, dim=-1)
-            att = self.attn_dropout(att)
-            y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        # if self.flash:
+        #     # efficient attention using Flash Attention CUDA kernels
+        #     y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+        
+        # manual implementation of attention
+        attn_mask = torch.tril(torch.ones(T, T)).view(1, 1, T, T).to(x.device)
+        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        att = att.masked_fill(attn_mask == 0, float('-inf'))
+        att = F.softmax(att, dim=-1)
+        att = self.attn_dropout(att)
+        y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
-
         # output projection
         y = self.resid_dropout(self.c_proj(y))
         return y

@@ -7,6 +7,7 @@ from contextlib import nullcontext
 import torch
 import tiktoken
 from model import GPTConfig, GPT
+import math
 
 # -----------------------------------------------------------------------------
 init_from = 'resume' # either 'resume' (from an out_dir) or a gpt2 variant (e.g. 'gpt2-xl')
@@ -81,9 +82,25 @@ start_ids = encode(start)
 x = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
 
 # run generation
+total_bits = 0
+total_generated_length = 0
 with torch.no_grad():
     with ctx:
         for k in range(num_samples):
             y = model.generate(x, max_new_tokens, temperature=temperature, top_k=top_k)
-            print(decode(y[0].tolist()))
-            print('---------------')
+            generated_text = decode(y[0].tolist())
+            generated_ids = encode(generated_text)
+            generated_length = len(generated_ids)
+
+            # Calculate total bits
+            t=y[0].to(float)
+            t[t == 0] = torch.tensor(1e-2, dtype=torch.float32)
+            # print(t)
+            total_bits += torch.sum(torch.log(t)) / math.log(2)
+
+            # Accumulate generated length
+            total_generated_length += generated_length
+
+# Calculate bits per character
+bits_per_character = total_bits / total_generated_length if total_generated_length > 0 else 0
+print(f"Average BPC: {bits_per_character}")
