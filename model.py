@@ -25,7 +25,7 @@ from torch.nn import functional as F
 
 #     def forward(self, input):
 #         return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
-class LayerNorm(nn.Module): #We'll modify this to work like AdaNorm
+class LayerNorm(nn.Module): #We've modified this to work like AdaNorm
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
 
     def __init__(self, ndim, bias):
